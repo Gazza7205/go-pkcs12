@@ -1,4 +1,5 @@
-module software.sslmate.com/src/go-pkcs12
+//module software.sslmate.com/src/go-pkcs12
+module github.com/gazza7205/go-pkcs12
 
 go 1.20
 
