@@ -29,3 +29,7 @@ Please be sure to use this path when you `go get` and `import` this package.
 ## Report Issues / Send Patches
 
 Open an issue or PR at https://github.com/SSLMate/go-pkcs12
+
+
+### This fork has updated dependencies and import path
+### This fork uses the unmerged changes here - https://github.com/pschou/go-pkcs12/tree/master
