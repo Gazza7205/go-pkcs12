@@ -10,6 +10,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/des"
+	"crypto/rc4"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509/pkix"
@@ -22,13 +23,19 @@ import (
 )
 
 var (
-	oidPBEWithSHAAnd3KeyTripleDESCBC = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 12, 1, 3})
-	oidPBEWithSHAAnd40BitRC2CBC      = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 12, 1, 6})
+	OidPBEWithSHAAnd128BitRC4        = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 12, 1, 1})
+	OidPBEWithSHAAnd40BitRC4         = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 12, 1, 2})
+	OidPBEWithSHAAnd3KeyTripleDESCBC = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 12, 1, 3})
+	OidPBEWithSHAAnd2KeyTripleDESCBC = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 12, 1, 4})
+	OidPBEWithSHAAnd128BitRC2CBC     = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 12, 1, 5})
+	OidPBEWithSHAAnd40BitRC2CBC      = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 12, 1, 6})
 	oidPBES2                         = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 5, 13})
 	oidPBKDF2                        = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 1, 5, 12})
-	oidHmacWithSHA1                  = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 2, 7})
-	oidHmacWithSHA256                = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 2, 9})
-	oidAES256CBC                     = asn1.ObjectIdentifier([]int{2, 16, 840, 1, 101, 3, 4, 1, 42})
+	OidHmacWithSHA1                  = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 2, 7})
+	OidHmacWithSHA256                = asn1.ObjectIdentifier([]int{1, 2, 840, 113549, 2, 9})
+	OidAES128CBC                     = asn1.ObjectIdentifier([]int{2, 16, 840, 1, 101, 3, 4, 1, 2})
+	OidAES192CBC                     = asn1.ObjectIdentifier([]int{2, 16, 840, 1, 101, 3, 4, 1, 22})
+	OidAES256CBC                     = asn1.ObjectIdentifier([]int{2, 16, 840, 1, 101, 3, 4, 1, 42})
 )
 
 // pbeCipher is an abstraction of a PKCS#12 cipher.
@@ -41,18 +48,63 @@ type pbeCipher interface {
 	deriveIV(salt, password []byte, iterations int) []byte
 }
 
-type shaWithTripleDESCBC struct{}
+type shaWith2KeyTripleDESCBC struct{}
 
-func (shaWithTripleDESCBC) create(key []byte) (cipher.Block, error) {
+func (shaWith2KeyTripleDESCBC) create(key []byte) (cipher.Block, error) {
 	return des.NewTripleDESCipher(key)
 }
 
-func (shaWithTripleDESCBC) deriveKey(salt, password []byte, iterations int) []byte {
+func (shaWith2KeyTripleDESCBC) deriveKey(salt, password []byte, iterations int) []byte {
+	key := pbkdf(sha1Sum, 20, 64, salt, password, iterations, 1, 16)
+	return append(key, key[:8]...)
+}
+
+func (shaWith2KeyTripleDESCBC) deriveIV(salt, password []byte, iterations int) []byte {
+	return pbkdf(sha1Sum, 20, 64, salt, password, iterations, 2, 8)
+}
+
+type shaWith3KeyTripleDESCBC struct{}
+
+func (shaWith3KeyTripleDESCBC) create(key []byte) (cipher.Block, error) {
+	return des.NewTripleDESCipher(key)
+}
+
+func (shaWith3KeyTripleDESCBC) deriveKey(salt, password []byte, iterations int) []byte {
 	return pbkdf(sha1Sum, 20, 64, salt, password, iterations, 1, 24)
 }
 
-func (shaWithTripleDESCBC) deriveIV(salt, password []byte, iterations int) []byte {
+func (shaWith3KeyTripleDESCBC) deriveIV(salt, password []byte, iterations int) []byte {
 	return pbkdf(sha1Sum, 20, 64, salt, password, iterations, 2, 8)
+}
+
+type shaWith40BitRC4 struct{}
+
+func (shaWith40BitRC4) create(key []byte) (cipher.Block, error) {
+	stream, err := rc4.NewCipher(key)
+	return streamToBlock{stream}, err
+}
+
+func (shaWith40BitRC4) deriveKey(salt, password []byte, iterations int) []byte {
+	return pbkdf(sha1Sum, 20, 64, salt, password, iterations, 1, 5)
+}
+
+func (shaWith40BitRC4) deriveIV(salt, password []byte, iterations int) []byte {
+	return []byte{0}
+}
+
+type shaWith128BitRC4 struct{}
+
+func (shaWith128BitRC4) create(key []byte) (cipher.Block, error) {
+	stream, err := rc4.NewCipher(key)
+	return streamToBlock{stream}, err
+}
+
+func (shaWith128BitRC4) deriveKey(salt, password []byte, iterations int) []byte {
+	return pbkdf(sha1Sum, 20, 64, salt, password, iterations, 1, 16)
+}
+
+func (shaWith128BitRC4) deriveIV(salt, password []byte, iterations int) []byte {
+	return []byte{0}
 }
 
 type shaWith40BitRC2CBC struct{}
@@ -69,6 +121,20 @@ func (shaWith40BitRC2CBC) deriveIV(salt, password []byte, iterations int) []byte
 	return pbkdf(sha1Sum, 20, 64, salt, password, iterations, 2, 8)
 }
 
+type shaWith128BitRC2CBC struct{}
+
+func (shaWith128BitRC2CBC) create(key []byte) (cipher.Block, error) {
+	return rc2.New(key, len(key)*8)
+}
+
+func (shaWith128BitRC2CBC) deriveKey(salt, password []byte, iterations int) []byte {
+	return pbkdf(sha1Sum, 20, 64, salt, password, iterations, 1, 16)
+}
+
+func (shaWith128BitRC2CBC) deriveIV(salt, password []byte, iterations int) []byte {
+	return pbkdf(sha1Sum, 20, 64, salt, password, iterations, 2, 8)
+}
+
 type pbeParams struct {
 	Salt       []byte
 	Iterations int
@@ -78,10 +144,18 @@ func pbeCipherFor(algorithm pkix.AlgorithmIdentifier, password []byte) (cipher.B
 	var cipherType pbeCipher
 
 	switch {
-	case algorithm.Algorithm.Equal(oidPBEWithSHAAnd3KeyTripleDESCBC):
-		cipherType = shaWithTripleDESCBC{}
-	case algorithm.Algorithm.Equal(oidPBEWithSHAAnd40BitRC2CBC):
+	case algorithm.Algorithm.Equal(OidPBEWithSHAAnd3KeyTripleDESCBC):
+		cipherType = shaWith3KeyTripleDESCBC{}
+	case algorithm.Algorithm.Equal(OidPBEWithSHAAnd2KeyTripleDESCBC):
+		cipherType = shaWith2KeyTripleDESCBC{}
+	case algorithm.Algorithm.Equal(OidPBEWithSHAAnd40BitRC2CBC):
 		cipherType = shaWith40BitRC2CBC{}
+	case algorithm.Algorithm.Equal(OidPBEWithSHAAnd128BitRC2CBC):
+		cipherType = shaWith128BitRC2CBC{}
+	case algorithm.Algorithm.Equal(OidPBEWithSHAAnd40BitRC4):
+		cipherType = shaWith40BitRC4{}
+	case algorithm.Algorithm.Equal(OidPBEWithSHAAnd128BitRC4):
+		cipherType = shaWith128BitRC4{}
 	case algorithm.Algorithm.Equal(oidPBES2):
 		// rfc7292#appendix-B.1 (the original PKCS#12 PBE) requires passwords formatted as BMPStrings.
 		// However, rfc8018#section-3 recommends that the password for PBES2 follow ASCII or UTF-8.
@@ -93,6 +167,9 @@ func pbeCipherFor(algorithm pkix.AlgorithmIdentifier, password []byte) (cipher.B
 		}
 		utf8Password := []byte(originalPassword)
 		return pbes2CipherFor(algorithm, utf8Password)
+	case algorithm.Algorithm.Equal(OidDataContentType):
+		// When there is no encryption
+		return nil, nil, nil
 	default:
 		return nil, nil, NotImplementedError("algorithm " + algorithm.Algorithm.String() + " is not supported")
 	}
@@ -117,6 +194,17 @@ func pbDecrypterFor(algorithm pkix.AlgorithmIdentifier, password []byte) (cipher
 	block, iv, err := pbeCipherFor(algorithm, password)
 	if err != nil {
 		return nil, 0, err
+	}
+
+	if len(iv) == 1 {
+		if bm, ok := block.(cipher.BlockMode); ok {
+			return bm, 1, nil
+		}
+		return nil, 0, errors.New("pkcs12: unexpected cipher block")
+	}
+
+	if block == nil {
+		return noCipher{}, 1, nil
 	}
 
 	return cipher.NewCBCDecrypter(block, iv), block.BlockSize(), nil
@@ -177,8 +265,8 @@ type pbes2Params struct {
 type pbkdf2Params struct {
 	Salt       asn1.RawValue
 	Iterations int
-	KeyLength  int `asn1:"optional"`
-	Prf        pkix.AlgorithmIdentifier
+	KeyLength  int                      `asn1:"optional"`
+	Prf        pkix.AlgorithmIdentifier `asn1:"optional"`
 }
 
 func pbes2CipherFor(algorithm pkix.AlgorithmIdentifier, password []byte) (cipher.Block, []byte, error) {
@@ -201,20 +289,34 @@ func pbes2CipherFor(algorithm pkix.AlgorithmIdentifier, password []byte) (cipher
 
 	var prf func() hash.Hash
 	switch {
-	case kdfParams.Prf.Algorithm.Equal(oidHmacWithSHA256):
+	case kdfParams.Prf.Algorithm.Equal(OidHmacWithSHA256):
 		prf = sha256.New
-	case kdfParams.Prf.Algorithm.Equal(oidHmacWithSHA1):
+	case kdfParams.Prf.Algorithm.Equal(OidHmacWithSHA1):
 		prf = sha1.New
 	case kdfParams.Prf.Algorithm.Equal(asn1.ObjectIdentifier([]int{})):
 		prf = sha1.New
 	}
 
-	key := pbkdf2.Key(password, kdfParams.Salt.Bytes, kdfParams.Iterations, 32, prf)
 	iv := params.EncryptionScheme.Parameters.Bytes
 
 	var block cipher.Block
 	switch {
-	case params.EncryptionScheme.Algorithm.Equal(oidAES256CBC):
+	case params.EncryptionScheme.Algorithm.Equal(OidAES128CBC):
+		key := pbkdf2.Key(password, kdfParams.Salt.Bytes, kdfParams.Iterations, 16, prf)
+		b, err := aes.NewCipher(key)
+		if err != nil {
+			return nil, nil, err
+		}
+		block = b
+	case params.EncryptionScheme.Algorithm.Equal(OidAES192CBC):
+		key := pbkdf2.Key(password, kdfParams.Salt.Bytes, kdfParams.Iterations, 24, prf)
+		b, err := aes.NewCipher(key)
+		if err != nil {
+			return nil, nil, err
+		}
+		block = b
+	case params.EncryptionScheme.Algorithm.Equal(OidAES256CBC):
+		key := pbkdf2.Key(password, kdfParams.Salt.Bytes, kdfParams.Iterations, 32, prf)
 		b, err := aes.NewCipher(key)
 		if err != nil {
 			return nil, nil, err
@@ -236,6 +338,17 @@ func pbEncrypterFor(algorithm pkix.AlgorithmIdentifier, password []byte) (cipher
 	block, iv, err := pbeCipherFor(algorithm, password)
 	if err != nil {
 		return nil, 0, err
+	}
+
+	if len(iv) == 1 {
+		if bm, ok := block.(cipher.BlockMode); ok {
+			return bm, 1, nil
+		}
+		return nil, 0, errors.New("pkcs12: unexpected cipher block")
+	}
+
+	if block == nil {
+		return noCipher{}, 1, nil
 	}
 
 	return cipher.NewCBCEncrypter(block, iv), block.BlockSize(), nil
